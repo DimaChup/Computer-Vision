@@ -15,13 +15,13 @@ TARGET_ALT = 35.0 # Meters
 # 1. Map Configuration
 MAP_FILE = "map.jpg"
 DUMMY_FILE = "dummy.png"
-MAP_WIDTH_METERS = 480.0  
+MAP_WIDTH_METERS = 480.0  # Total width of the map image in meters
 REF_LAT = 51.425106  
 REF_LON = -2.672257
 
 # 2. Target Size Configuration
-TARGET_REAL_RADIUS_M = 0.15 
-DUMMY_HEIGHT_M = 1.8        
+TARGET_REAL_RADIUS_M = 0.15 # 15 cm radius for the red dot
+DUMMY_HEIGHT_M = 1.8        # 6 ft (1.8m) tall dummy
 
 # 3. Camera Specs
 SENSOR_WIDTH_MM = 5.02; FOCAL_LENGTH_MM = 6.0
@@ -50,35 +50,53 @@ class VisualFlightMission:
             print(f"Error: '{MAP_FILE}' not found. Creating a fake green map.")
             self.full_map = np.zeros((1000, 1000, 3), dtype=np.uint8)
             self.full_map[:] = (34, 139, 34)
+            cv2.line(self.full_map, (0,0), (1000,1000), (255,255,255), 2)
         
         self.map_h, self.map_w = self.full_map.shape[:2]
         self.pix_per_m = self.map_w / MAP_WIDTH_METERS
         
+        # 2. Initialize Coverage Overlay (Black image same size as map)
+        self.coverage_overlay = np.zeros_like(self.full_map)
+        
         # Load Dummy Asset
         self.dummy_img = cv2.imread(DUMMY_FILE, cv2.IMREAD_UNCHANGED)
         if self.dummy_img is None:
-            print(f"Warning: '{DUMMY_FILE}' not found. Will draw placeholder.")
+            print(f"Warning: '{DUMMY_FILE}' not found. Stickman mode only.")
         
-        # 2. Interactive Target Placement
+        # --- CALCULATE SIZES ---
+        # 1. Red Dot Size (on Map)
+        raw_radius = TARGET_REAL_RADIUS_M * self.pix_per_m
+        self.target_radius_px = max(2, int(raw_radius))
+        
+        print(f"Map Scale: 1m = {self.pix_per_m:.2f} px")
+        
+        # 3. Interactive Target Placement
+        self.sim_target_type = None
+        self.sim_target_px = None
+        
         self.select_target_on_map()
         
-        # 3. Vision System
-        # We assume best.tflite is in the folder
+        # 4. Vision System
         self.eyes = VisionSystem(camera_index=None, model_path="best.tflite")
+        # Configure vision mode based on what user placed
+        if self.sim_target_type == "dummy":
+            self.eyes.using_ai = True 
+        else:
+            self.eyes.using_ai = False 
         
-        # 4. Flight State
+        # 5. Flight State
         self.state = State.INIT
         self.master = None
         self.last_req = 0
         self.last_heartbeat = 0
         
-        # 5. Telemetry
+        # 6. Telemetry
         self.lat = REF_LAT
         self.lon = REF_LON
         self.alt = 0.0
         self.roll = 0; self.pitch = 0; self.yaw = 0
         
-        # 6. Mission Data
+        # 7. Mission Data
         self.waypoints = []
         self.wp_index = 0
         self.target_lat = 0
@@ -99,14 +117,13 @@ class VisualFlightMission:
         if target_w == 0:
             scale = target_h / h_src
             target_w = int(w_src * scale)
-        
+            
         if target_w <= 0 or target_h <= 0: return
 
         try:
             resized = cv2.resize(overlay, (target_w, target_h))
         except: return 
         
-        # Rotate logic
         diag = int(math.sqrt(target_w**2 + target_h**2))
         pad_x = (diag - target_w) // 2
         pad_y = (diag - target_h) // 2
@@ -117,7 +134,6 @@ class VisualFlightMission:
         M_rot = cv2.getRotationMatrix2D((w_pad//2, h_pad//2), rotation_deg, 1.0)
         rotated = cv2.warpAffine(padded, M_rot, (w_pad, h_pad))
         
-        # Paste logic
         y1 = y - h_pad // 2; y2 = y1 + h_pad
         x1 = x - w_pad // 2; x2 = x1 + w_pad
         
@@ -153,28 +169,36 @@ class VisualFlightMission:
         else:
             display_map = self.full_map.copy()
 
+        self.temp_type = "dot"
+
         def mouse_callback(event, x, y, flags, param):
             if event == cv2.EVENT_LBUTTONDOWN:
                 temp_vis = display_map.copy()
-                
                 real_x = int(x / scale_factor)
                 real_y = int(y / scale_factor)
                 self.sim_target_px = (real_x, real_y)
                 
-                # Always draw Dummy on preview for simplicity
-                # Visualize dummy scaled for this preview window
-                map_h_px = DUMMY_HEIGHT_M * self.pix_per_m
-                display_h_px = int(map_h_px * scale_factor)
-                display_h_px = max(20, display_h_px) 
+                if flags & cv2.EVENT_FLAG_CTRLKEY:
+                    self.temp_type = "dummy"
+                    map_h_px = DUMMY_HEIGHT_M * self.pix_per_m
+                    display_h_px = int(map_h_px * scale_factor)
+                    display_h_px = max(20, display_h_px) 
+                    self.overlay_image_alpha(temp_vis, self.dummy_img, x, y, 0, display_h_px)
+                else:
+                    self.temp_type = "dot"
+                    vis_radius = max(2, int(self.target_radius_px * scale_factor))
+                    cv2.circle(temp_vis, (x, y), vis_radius, (0, 0, 255), -1)
                 
-                self.overlay_image_alpha(temp_vis, self.dummy_img, x, y, 0, display_h_px)
                 cv2.imshow("Select Target", temp_vis)
 
         cv2.imshow("Select Target", display_map)
         cv2.setMouseCallback("Select Target", mouse_callback)
-        print("CLICK map to place Dummy target. Press KEY to start mission.")
+        print("CLICK map. Left: Red Dot. Ctrl+Left: Dummy. Press KEY to start.")
         cv2.waitKey(0)
         cv2.destroyWindow("Select Target")
+        
+        if hasattr(self, 'sim_target_px'):
+            self.sim_target_type = self.temp_type
 
     def gps_to_pixels(self, lat, lon):
         lat_m = 111132.954 - 559.822 * math.cos(2 * math.radians(lat))
@@ -186,7 +210,6 @@ class VisualFlightMission:
         return int(dx * self.pix_per_m), int(dy * self.pix_per_m)
 
     def get_drone_view(self, cx, cy):
-        # 1. Camera Params
         fov = 2 * math.atan(SENSOR_WIDTH_MM / (2 * FOCAL_LENGTH_MM))
         safe_alt = max(1.0, self.alt)
         ground_w = 2 * safe_alt * math.tan(fov / 2)
@@ -194,7 +217,6 @@ class VisualFlightMission:
         self.view_w_px = int(ground_w * self.pix_per_m)
         self.view_h_px = int(self.view_w_px * (IMAGE_H / IMAGE_W))
         
-        # 2. Background Crop
         M = cv2.getRotationMatrix2D((cx, cy), math.degrees(self.yaw), 1.0)
         rot_map = cv2.warpAffine(self.full_map, M, (self.map_w, self.map_h))
         
@@ -211,39 +233,50 @@ class VisualFlightMission:
             
         final_view = cv2.resize(crop, (IMAGE_W, IMAGE_H))
             
-        # 3. Dynamic Dummy Overlay
-        if self.sim_target_px is not None and self.dummy_img is not None:
+        if self.sim_target_px is not None:
             dx = self.sim_target_px[0] - cx
             dy = self.sim_target_px[1] - cy
-            
             angle_rad = -self.yaw
             dx_rot = dx * math.cos(angle_rad) - dy * math.sin(angle_rad)
             dy_rot = dx * math.sin(angle_rad) + dy * math.cos(angle_rad)
-            
             scale = IMAGE_W / max(1, self.view_w_px)
             screen_x = int((IMAGE_W / 2) + (dx_rot * scale))
             screen_y = int((IMAGE_H / 2) + (dy_rot * scale))
-            
             px_per_m_screen = IMAGE_W / ground_w
             
-            dummy_h_screen = int(DUMMY_HEIGHT_M * px_per_m_screen)
-            self.overlay_image_alpha(final_view, self.dummy_img, screen_x, screen_y, 0, dummy_h_screen, rotation_deg=math.degrees(self.yaw))
+            if self.sim_target_type == "dummy" and self.dummy_img is not None:
+                dummy_h_screen = int(DUMMY_HEIGHT_M * px_per_m_screen)
+                self.overlay_image_alpha(final_view, self.dummy_img, screen_x, screen_y, 0, dummy_h_screen, rotation_deg=math.degrees(self.yaw))
+            else:
+                dot_rad_screen = int(TARGET_REAL_RADIUS_M * px_per_m_screen)
+                cv2.circle(final_view, (screen_x, screen_y), max(3, dot_rad_screen), (0, 0, 255), -1)
 
         return final_view
 
     def get_god_view(self, cx, cy):
         display_map = self.full_map.copy()
         
-        # Draw Target (Dummy Marker)
-        if self.sim_target_px is not None and self.dummy_img is not None:
-            map_h_px = int(DUMMY_HEIGHT_M * self.pix_per_m)
-            map_h_px = max(10, map_h_px) 
-            self.overlay_image_alpha(display_map, self.dummy_img, self.sim_target_px[0], self.sim_target_px[1], 0, map_h_px)
+        # Draw Target
+        if self.sim_target_px is not None:
+            if self.sim_target_type == "dummy" and self.dummy_img is not None:
+                map_h_px = int(DUMMY_HEIGHT_M * self.pix_per_m)
+                map_h_px = max(10, map_h_px) 
+                self.overlay_image_alpha(display_map, self.dummy_img, self.sim_target_px[0], self.sim_target_px[1], 0, map_h_px)
+            else:
+                cv2.circle(display_map, self.sim_target_px, self.target_radius_px, (0, 0, 255), -1)
 
-        # Draw Drone
-        cv2.circle(display_map, (cx, cy), 8, (255, 0, 0), -1)
+        # --- DRAW COVERAGE TRAIL ---
+        # 1. Update Coverage Mask: Draw current FOV polygon on the mask
         rect = ((cx, cy), (self.view_w_px, self.view_h_px), math.degrees(self.yaw))
         box = np.int32(cv2.boxPoints(rect))
+        cv2.fillPoly(self.coverage_overlay, [box], (255, 255, 0)) # Cyan
+        
+        # 2. Blend: Mix the coverage mask into the display map
+        # Add 20% of the cyan color to visited areas
+        cv2.addWeighted(self.coverage_overlay, 0.2, display_map, 1.0, 0, display_map)
+        
+        # Draw Drone
+        cv2.circle(display_map, (cx, cy), 8, (255, 0, 0), -1)
         cv2.drawContours(display_map, [box], 0, (0, 255, 255), 2)
         
         if self.target_lat != 0:
@@ -282,30 +315,26 @@ class VisualFlightMission:
         drone_frame = self.get_drone_view(px, py)
         god_frame = self.get_god_view(px, py)
         
-        # Draw Crosshair
         cx, cy = IMAGE_W // 2, IMAGE_H // 2
         cv2.line(drone_frame, (cx - 20, cy), (cx + 20, cy), (255, 255, 0), 2)
         cv2.line(drone_frame, (cx, cy - 20), (cx, cy + 20), (255, 255, 0), 2)
         
-        # Vision Logic
         found, u, v = self.eyes.process_frame_manually(drone_frame)
         if found:
-            # Note: VisionSystem draws the box itself if it finds something
+            cv2.circle(drone_frame, (u, v), 10, (0, 255, 0), 2)
             cv2.line(drone_frame, (u, v), (cx, cy), (0, 255, 0), 1) 
-            cv2.putText(drone_frame, "AI DETECTED", (10, 450), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(drone_frame, "TARGET ACQUIRED", (10, 450), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
         # Dashboard Text
         cv2.putText(drone_frame, f"State: {self.state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
         cv2.putText(drone_frame, f"Alt: {self.alt:.1f}m", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
         if self.state == State.MANUAL:
-            cv2.putText(drone_frame, "MANUAL CONTROL: W/S/A/D/Q/E", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+            cv2.putText(drone_frame, "MANUAL CONTROL: W/S/A/D/Q/E I/K", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
         
         if self.target_lat != 0:
             cv2.putText(drone_frame, f"Tgt GPS: {self.target_lat:.6f}, {self.target_lon:.6f}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-            
         if self.landing_lat != 0:
             cv2.putText(drone_frame, f"Land GPS: {self.landing_lat:.6f}, {self.landing_lon:.6f}", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 255), 2)
-
         if self.state == State.DONE:
              cv2.putText(drone_frame, f"FINAL LANDING: {self.final_dist:.2f}m from Target", (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
@@ -314,7 +343,6 @@ class VisualFlightMission:
 
         combined = np.hstack((god_frame, drone_frame))
         cv2.imshow("Mission Dashboard", combined)
-        
         return found, u, v
 
     def update_telemetry(self):
@@ -322,7 +350,6 @@ class VisualFlightMission:
         while True:
             msg = self.master.recv_match(blocking=False)
             if not msg: break
-            
             if msg.get_type() == 'GLOBAL_POSITION_INT':
                 self.lat = msg.lat / 1e7
                 self.lon = msg.lon / 1e7
@@ -347,7 +374,6 @@ class VisualFlightMission:
             y_offset = i * SWATH
             if i % 2 == 0: p1_x, p1_y, p2_x, p2_y = 0, y_offset, WIDTH, y_offset
             else: p1_x, p1_y, p2_x, p2_y = WIDTH, y_offset, 0, y_offset
-            
             wp1 = (start_lat - (p1_y/lat_m), start_lon + (p1_x/lon_m))
             wp2 = (start_lat - (p2_y/lat_m), start_lon + (p2_x/lon_m))
             wps.append(wp1); wps.append(wp2)
@@ -361,10 +387,8 @@ class VisualFlightMission:
         
         delta_x_m = delta_x_px * gsd_m
         delta_y_m = delta_y_px * gsd_m
-        
         fwd_m = -delta_y_m
         right_m = delta_x_m
-        
         offset_n = fwd_m * math.cos(self.yaw) - right_m * math.sin(self.yaw)
         offset_e = fwd_m * math.sin(self.yaw) + right_m * math.cos(self.yaw)
         
@@ -380,9 +404,7 @@ class VisualFlightMission:
         print("Starting Mission...")
         cv2.namedWindow("Mission Dashboard")
         cv2.setMouseCallback("Mission Dashboard", self.on_dashboard_mouse)
-        
         key = -1 
-        
         while True:
             self.update_telemetry()
             target_found, px_u, px_v = self.update_dashboard()
@@ -397,8 +419,20 @@ class VisualFlightMission:
                     self.master.mav.set_position_target_local_ned_send(
                         0, self.master.target_system, self.master.target_component,
                         mavutil.mavlink.MAV_FRAME_BODY_OFFSET_NED,
-                        0b110111000111, 
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                        0b110111000111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                key = -1
+            
+            if key == ord('r') or key == ord('R'):
+                if self.master.motors_armed():
+                    print("MANUAL CMD: DISARMING")
+                    self.master.mav.command_long_send(
+                        self.master.target_system, self.master.target_component,
+                        mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0, 0, 0, 0, 0, 0, 0, 0)
+                else:
+                    print("MANUAL CMD: ARMING")
+                    self.master.mav.command_long_send(
+                        self.master.target_system, self.master.target_component,
+                        mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0, 1, 0, 0, 0, 0, 0, 0)
                 key = -1
 
             # --- FLIGHT STATE MACHINE ---
@@ -488,9 +522,9 @@ class VisualFlightMission:
                 elif key == ord('d'): vy = SPEED   
                 elif key == ord('q'): yaw_rate = -0.5 
                 elif key == ord('e'): yaw_rate = 0.5  
-                elif key == 82: vz = -1.0 
-                elif key == 84: vz = 1.0  
-
+                elif key == 82 or key == ord('i'): vz = -1.0 # Up Arrow (Climb)
+                elif key == 84 or key == ord('k'): vz = 1.0  # Down Arrow (Descend)
+                
                 type_mask = 0b010111000111 
                 self.master.mav.set_position_target_local_ned_send(
                     0, self.master.target_system, self.master.target_component,
