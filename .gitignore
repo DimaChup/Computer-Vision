@@ -1,7 +1,7 @@
 __pycache__/
 *.pyc
 venv/
-dataset/
+project_data/
 runs/
 *.tflite
 *.pt

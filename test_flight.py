@@ -10,7 +10,7 @@ from vision import VisionSystem
 #      CALIBRATION SECTION
 # ==========================================
 CONNECTION_STR = 'tcp:127.0.0.1:5762'
-TARGET_ALT = 60.0 # Search Altitude
+TARGET_ALT = 40.0 # Search Altitude
 VERIFY_ALT = 15.0 # Verification Altitude (Fixed: Added this missing variable)
 
 # 1. Map Configuration

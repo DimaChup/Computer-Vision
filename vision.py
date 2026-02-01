@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import os
 import sys
+import time
 
 # Try to import Ultralytics (YOLO)
 try:
@@ -14,103 +15,85 @@ except ImportError:
 class VisionSystem:
     def __init__(self, camera_index=0, model_path="best.tflite"):
         self.cap = None
-        # Only open camera if index is provided (Real Flight Mode)
+        # Real Camera Setup
         if camera_index is not None:
             self.cap = cv2.VideoCapture(camera_index)
+            # Set to Native Resolution (IMX296)
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1456)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1088)
+            self.cap.set(cv2.CAP_PROP_FPS, 30)
         
         # --- AI MODEL SETUP ---
         self.model = None
         self.using_ai = False
         
-        # Check if model exists
-        if AI_AVAILABLE and os.path.exists(model_path):
-            print(f"[VISION] Found model: {model_path}")
+        # Pre-check dependencies for TFLite
+        tflite_ready = True
+        if model_path.endswith('.tflite'):
+            try: import tensorflow
+            except ImportError: 
+                try: import tflite_runtime
+                except ImportError: tflite_ready = False
+
+        if AI_AVAILABLE and tflite_ready and os.path.exists(model_path):
             try:
-                # 1. Load YOLO object
+                print(f"[VISION] Loading Model: {model_path}...")
                 self.model = YOLO(model_path, task='detect')
                 
-                # 2. CRITICAL: Run a dummy inference to force-load dependencies.
-                # If 'tensorflow' is missing, this line will throw an error HERE,
-                # allowing us to catch it and switch to fallback mode safely.
-                print("[VISION] Verifying AI engine dependencies...")
-                dummy_frame = np.zeros((100, 100, 3), dtype=np.uint8)
-                self.model(dummy_frame, verbose=False)
+                # CRITICAL: Warmup run to force backend load and check for errors immediately
+                print("[VISION] Verifying AI Engine...")
+                self.model(np.zeros((100, 100, 3), dtype=np.uint8), verbose=False)
                 
                 self.using_ai = True
-                print("[VISION] AI Engine Verified. Mode: NEURAL NETWORK.")
+                print("[VISION] AI Engine Loaded Successfully!")
             except Exception as e:
-                print(f"\n[VISION] AI STARTUP FAILED: {e}")
+                print(f"[VISION] AI Load Failed: {e}")
                 print("[VISION] Reason: Likely missing 'tensorflow' or 'tflite_runtime'.")
-                print("[VISION] ACTION: Switching to RED DOT FALLBACK MODE.\n")
                 self.using_ai = False
-                self.model = None
         else:
-             print("[VISION] Model not found or AI libs missing. Mode: RED DOT FALLBACK.")
-
-        # --- FALLBACK: RED COLOR TUNING ---
-        self.lower_red1 = np.array([0, 120, 70])
-        self.upper_red1 = np.array([10, 255, 255])
-        self.lower_red2 = np.array([170, 120, 70])
-        self.upper_red2 = np.array([180, 255, 255])
-        self.min_area = 200 
+            print("[VISION] AI Not Available. Vision Disabled (No fallback).")
 
     def detect_in_image(self, frame):
-        """ 
-        Main detection function. 
-        Returns: found (bool), center_x (int), center_y (int), confidence (float)
-        """
+        """ Returns: found (bool), x, y, confidence (float) """
         if frame is None: return False, 0, 0, 0.0
 
-        # --- STRATEGY A: AI DETECTION (YOLO) ---
+        # --- AI DETECTION ONLY ---
         if self.using_ai:
+            # Run inference (conf=0.4 means 40% confidence required)
             results = self.model(frame, conf=0.4, verbose=False)
+            
             if results[0].boxes:
                 # Find best detection
                 best_box = max(results[0].boxes, key=lambda x: x.conf[0])
                 x, y, w, h = best_box.xywh[0].cpu().numpy()
                 conf = float(best_box.conf[0])
                 
-                # Draw box
+                # Visualization (Draw Box on the frame passed in)
                 x1, y1, x2, y2 = best_box.xyxy[0].cpu().numpy()
                 cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
                 cv2.putText(frame, f"AI {conf:.2f}", (int(x1), int(y1)-10), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
                 
                 return True, int(x), int(y), conf
-            return False, 0, 0, 0.0
-
-        # --- STRATEGY B: RED COLOR (FALLBACK) ---
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, self.lower_red1, self.upper_red1) + cv2.inRange(hsv, self.lower_red2, self.upper_red2)
-        
-        kernel = np.ones((5, 5), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
-        if contours:
-            largest = max(contours, key=cv2.contourArea)
-            if cv2.contourArea(largest) > self.min_area:
-                M = cv2.moments(largest)
-                if M["m00"] != 0:
-                    cx = int(M["m10"] / M["m00"])
-                    cy = int(M["m01"] / M["m00"])
-                    
-                    # Visual debug
-                    cv2.circle(frame, (cx, cy), 15, (0, 0, 255), 2)
-                    return True, cx, cy, 1.0 # 100% confidence for color match
 
         return False, 0, 0, 0.0
 
     def get_latest_detection(self):
+        """ For Real Drone """
         if not self.cap: return False, 0, 0, 0.0
         ret, frame = self.cap.read()
         if not ret: return False, 0, 0, 0.0
         return self.detect_in_image(frame)
+    
+    def get_frame(self):
+        """ For Debugging/Recording """
+        if not self.cap: return None
+        ret, frame = self.cap.read()
+        return frame if ret else None
 
     def process_frame_manually(self, frame):
+        """ For Simulation """
         return self.detect_in_image(frame)
-        
+
     def release(self):
         if self.cap: self.cap.release()
