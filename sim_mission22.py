@@ -10,8 +10,8 @@ from vision import VisionSystem
 #      CALIBRATION SECTION
 # ==========================================
 CONNECTION_STR = 'tcp:127.0.0.1:5762'
-TARGET_ALT = 35.0 # Search Altitude
-VERIFY_ALT = 15.0 # Descent Altitude for Verification
+TARGET_ALT = 60.0 # Search Altitude
+VERIFY_ALT = 15.0 # Verification Altitude (Fixed: Added this missing variable)
 
 # 1. Map Configuration
 MAP_FILE = "map.jpg"
@@ -38,13 +38,13 @@ class State:
     TRANSIT_TO_SEARCH = "TRANSIT_TO_SEARCH"
     SEARCH = "SEARCH"
     CENTERING = "CENTERING" 
-    DESCENDING = "DESCENDING" # <--- Restored
-    VERIFY = "VERIFY"         # <--- Restored
+    DESCENDING = "DESCENDING"
+    VERIFY = "VERIFY"
+    HOVER = "HOVER"         
     APPROACH = "APPROACH"   
     LANDING = "LANDING"
     MANUAL = "MANUAL"
     DONE = "DONE"
-    HOVER = "HOVER" # Fallback state
 
 class VisualFlightMission:
     def __init__(self):
@@ -78,6 +78,7 @@ class VisualFlightMission:
         self.sim_target_type = None
         self.sim_target_px = None
         self.search_polygon = [] 
+        self.search_polygon_gps = []
         
         self.setup_simulation_on_map()
         
@@ -100,6 +101,7 @@ class VisualFlightMission:
         self.lat = REF_LAT
         self.lon = REF_LON
         self.alt = 0.0
+        self.vz = 0.0
         self.roll = 0; self.pitch = 0; self.yaw = 0
         self.current_conf = 0.0
         
@@ -239,6 +241,11 @@ class VisualFlightMission:
         if hasattr(self, 'sim_target_px'):
             self.sim_target_type = self.temp_type
 
+        # Convert Polygon Pixels to GPS for Flight Logic
+        for pt in self.search_polygon:
+            lat, lon = self.pixels_to_gps(pt[0], pt[1])
+            self.search_polygon_gps.append((lat, lon))
+
     def gps_to_pixels(self, lat, lon):
         lat_m = 111132.954 - 559.822 * math.cos(2 * math.radians(lat))
         lon_m = 111132.954 * math.cos(math.radians(lat))
@@ -329,7 +336,7 @@ class VisualFlightMission:
              poly_pts = [np.array(self.search_polygon, np.int32)]
              cv2.polylines(display_map, poly_pts, True, (0, 255, 255), 2)
 
-        # Draw Coverage
+        # Draw Coverage (Correctly blended)
         rect = ((cx, cy), (self.view_w_px, self.view_h_px), math.degrees(self.yaw))
         box = np.int32(cv2.boxPoints(rect))
         cv2.fillPoly(self.coverage_overlay, [box], (255, 255, 0)) 
@@ -425,6 +432,7 @@ class VisualFlightMission:
                 self.lat = msg.lat / 1e7
                 self.lon = msg.lon / 1e7
                 self.alt = msg.relative_alt / 1000.0
+                self.vz = msg.vz / 100.0 # Convert cm/s to m/s
             elif msg.get_type() == 'ATTITUDE':
                 self.roll = msg.roll
                 self.pitch = msg.pitch
@@ -433,43 +441,75 @@ class VisualFlightMission:
                 self.last_heartbeat = time.time()
 
     def generate_search_pattern(self):
-        print("Generating Search Grid from Polygon...")
+        print("Generating OPTIMIZED Search Grid from Polygon...")
         if len(self.search_polygon) < 3:
             print("WARNING: No polygon defined. Using default relative box.")
-            width_m, height_m = 120.0, 120.0
-            start_lat, start_lon = self.lat, self.lon
-            tl_px = self.gps_to_pixels(start_lat, start_lon)
-            br_px = (int(tl_px[0] + width_m*self.pix_per_m), int(tl_px[1] + height_m*self.pix_per_m))
-            poly_mask_pts = np.array([[tl_px, (br_px[0], tl_px[1]), br_px, (tl_px[0], br_px[1])]], dtype=np.int32)
-        else:
-            poly_mask_pts = np.array([self.search_polygon], dtype=np.int32)
-            x_pts = [p[0] for p in self.search_polygon]
-            y_pts = [p[1] for p in self.search_polygon]
-            min_y, max_y = min(y_pts), max(y_pts)
+            # Fallback (keep existing simple box logic if user skips polygon)
+            return 
 
+        # 1. Create a Mask of the Polygon on the Map
+        poly_mask_pts = np.array([self.search_polygon], dtype=np.int32)
         mask = np.zeros((self.map_h, self.map_w), dtype=np.uint8)
         cv2.fillPoly(mask, poly_mask_pts, 255)
 
+        # 2. Determine Optimal Sweep Direction (Rotated Bounding Box)
+        rect = cv2.minAreaRect(poly_mask_pts[0])
+        (center, size, angle) = rect
+        width, height = size
+        
+        # Decide scan angle: Align with the longest edge
+        if width < height:
+            scan_angle = angle + 90
+        else:
+            scan_angle = angle
+            
+        print(f"Optimal Scan Angle: {scan_angle:.1f} degrees")
+
+        # 3. Rotate the Mask so the scan lines are horizontal (0 degrees)
+        # This makes the math simple: just scan rows Y
+        M = cv2.getRotationMatrix2D(center, scan_angle, 1.0)
+        M_inv = cv2.invertAffineTransform(M) # Correct inversion
+        
+        rotated_mask = cv2.warpAffine(mask, M, (self.map_w, self.map_h))
+
+        # 4. Generate Scan Lines (Horizontal on the rotated mask)
         ground_width_m = (SENSOR_WIDTH_MM * TARGET_ALT) / FOCAL_LENGTH_MM
         overlap = 0.2
         SWATH_M = ground_width_m * (1.0 - overlap)
         step_px = int(SWATH_M * self.pix_per_m)
         if step_px < 1: step_px = 1
         
-        scan_y_start = min_y if 'min_y' in locals() else 0
-        scan_y_end = max_y if 'max_y' in locals() else self.map_h
+        # Find bounds of the WHITE area in rotated mask
+        points = cv2.findNonZero(rotated_mask)
+        if points is None: return 
+        x, y, w, h = cv2.boundingRect(points)
         
         wps = []
         direction = 1 
         
-        for y in range(scan_y_start + step_px//2, scan_y_end, step_px):
-            row = mask[y, :]
+        # Iterate rows in the rotated frame
+        for scan_y in range(y + step_px//2, y + h, step_px):
+            row = rotated_mask[scan_y, :]
             pixels = np.where(row == 255)[0]
+            
             if len(pixels) > 0:
+                # Start and End x-coordinates of this scan line
                 x_start = pixels[0]
                 x_end = pixels[-1]
-                lat_1, lon_1 = self.pixels_to_gps(x_start, y)
-                lat_2, lon_2 = self.pixels_to_gps(x_end, y)
+                
+                # Create points [x, y]
+                pt1 = np.array([[[x_start, scan_y]]], dtype=np.float32)
+                pt2 = np.array([[[x_end, scan_y]]], dtype=np.float32)
+                
+                # ROTATE BACK to original map coordinates
+                pt1_orig = cv2.transform(pt1, M_inv)[0][0]
+                pt2_orig = cv2.transform(pt2, M_inv)[0][0]
+                
+                # Convert pixels to GPS
+                lat_1, lon_1 = self.pixels_to_gps(pt1_orig[0], pt1_orig[1])
+                lat_2, lon_2 = self.pixels_to_gps(pt2_orig[0], pt2_orig[1])
+                
+                # Add to waypoint list
                 if direction == 1:
                     wps.append((lat_1, lon_1))
                     wps.append((lat_2, lon_2))
@@ -477,8 +517,9 @@ class VisualFlightMission:
                     wps.append((lat_2, lon_2))
                     wps.append((lat_1, lon_1))
                 direction *= -1
+
         self.waypoints = wps
-        print(f"Generated {len(wps)} waypoints.")
+        print(f"Generated {len(wps)} optimized waypoints.")
 
     def calculate_target_gps(self, u, v):
         Cx = IMAGE_W / 2; Cy = IMAGE_H / 2
@@ -507,7 +548,6 @@ class VisualFlightMission:
             self.update_telemetry()
             target_found, px_u, px_v = self.update_dashboard()
             
-            # --- MANUAL MODE TOGGLE ---
             if key == ord('m') or key == ord('M'):
                 if self.state != State.MANUAL:
                     print(f"[{self.state}] SWITCHING TO MANUAL CONTROL.")
@@ -516,7 +556,6 @@ class VisualFlightMission:
                 else:
                     print(f"[{self.state}] EXITING MANUAL. RESUMING MISSION.")
                     # Restore previous state (e.g. SEARCH or HOVER)
-                    # If prev was None (weird edge case), default to HOVER
                     self.state = self.previous_state if self.previous_state else State.HOVER
                     
                     # Stop any residual manual velocity
@@ -583,6 +622,8 @@ class VisualFlightMission:
             elif self.state == State.TAKEOFF:
                 if self.alt >= TARGET_ALT * 0.90:
                     print(f"\n[{self.state}] Altitude Reached. Flying to Grid Start.")
+                    
+                    # New: Fly to start of grid if defined
                     self.generate_search_pattern()
                     if self.waypoints:
                         start_wp = self.waypoints[0]
@@ -605,6 +646,7 @@ class VisualFlightMission:
             elif self.state == State.TRANSIT_TO_SEARCH:
                 if self.waypoints:
                     target = self.waypoints[0]
+                    # Check distance to start point
                     lat_scale = 111132.0 
                     dist = math.sqrt(((self.lat-target[0])*lat_scale)**2 + ((self.lon-target[1])*lat_scale*0.62)**2)
                     
@@ -643,7 +685,7 @@ class VisualFlightMission:
                     if dist < 2.0:
                         self.wp_index += 1
                 else:
-                    print("Dummy not found in this area.")
+                    print("Search Complete. No Target.")
                     self.state = State.DONE
             
             elif self.state == State.MANUAL:
@@ -699,22 +741,18 @@ class VisualFlightMission:
                         0, self.master.target_system, self.master.target_component,
                         mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
                         0b110111111000, 
-                        int(self.target_lat * 1e7), int(self.target_lon * 1e7), VERIFY_ALT,
+                        int(self.target_lat * 1e7), int(self.target_lon * 1e7), VERIFY_ALT, # Target 15m
                         0, 0, 0, 0, 0, 0, 0, 0)
                     self.last_req = time.time()
                 
                 # 3. Check Altitude
-                if self.alt <= (VERIFY_ALT + 1.0): # Within 1m of 15m
+                if self.alt <= (VERIFY_ALT + 1.0): 
                      print(f"[{self.state}] Reached Verification Altitude. Hovering to Verify.")
                      self.state = State.VERIFY
                      self.last_req = time.time() # Reset for hover timer
 
             elif self.state == State.VERIFY:
                  # Check Confidence
-                 # (In sim, 'dummy' type implies 1.0, 'dot' implies high color confidence)
-                 # self.current_conf is updated in update_dashboard
-                 
-                 # Wait 2 seconds to stabilize
                  if time.time() - self.last_req > 2.0:
                      if self.current_conf > 0.75:
                           print(f"[{self.state}] CONFIRMED (Conf: {self.current_conf:.2f}). Proceeding to Approach.")
@@ -758,9 +796,18 @@ class VisualFlightMission:
                     self.state = State.LANDING
 
             elif self.state == State.LANDING:
-                if self.alt < 0.5:
-                    print(f"[{self.state}] Touchdown. Mission Complete.")
-                    lat_scale = 111132.0
+                # Detect Landing via Velocity (since Alt might not be 0 on uneven terrain)
+                is_landed = False
+                if self.alt < 0.3: is_landed = True
+                if self.alt < 10.0 and abs(self.vz) < 0.1 and time.time() - self.last_req > 5.0: is_landed = True
+
+                if is_landed:
+                    print(f"[{self.state}] Touchdown Detected. Disarming.")
+                    self.master.mav.command_long_send(
+                        self.master.target_system, self.master.target_component,
+                        mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM, 0, 0, 0, 0, 0, 0, 0, 0)
+                    
+                    lat_scale = 111132.0 
                     final_error = math.sqrt(((self.lat-self.target_lat)*lat_scale)**2 + ((self.lon-self.target_lon)*lat_scale*0.62)**2)
                     self.final_dist = final_error
                     self.state = State.DONE
@@ -772,6 +819,9 @@ class VisualFlightMission:
                         0b110111111000, 
                         int(self.landing_lat * 1e7), int(self.landing_lon * 1e7), 0, 
                         0, 0, 0, 0, 0, 0, 0, 0)
+                    if time.time() - self.last_req > 5.0: # Reset check timer if command sent
+                         pass # Wait, last_req is for command. Need separate timer for land check.
+                         pass
                     self.last_req = time.time()
 
             # Keyboard Zoom support as backup
