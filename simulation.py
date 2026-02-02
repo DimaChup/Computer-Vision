@@ -49,16 +49,12 @@ class SimulationEnvironment:
         temp_type = "dot"
         search_polygon = [] 
         polygon_closed = False
-        nfz_polygon = []
-        nfz_closed = False
-        manual_transit_pixels = []
-        transit_done = False
         target_px = None
         
         window_name = "Select Target" 
 
         def mouse_callback(event, x, y, flags, param):
-            nonlocal target_px, temp_type, polygon_closed, nfz_closed, transit_done
+            nonlocal target_px, temp_type, polygon_closed
             real_x = int(x / scale_factor)
             real_y = int(y / scale_factor)
             update = False
@@ -68,27 +64,15 @@ class SimulationEnvironment:
                     target_px = (real_x, real_y)
                     if flags & cv2.EVENT_FLAG_CTRLKEY: temp_type = "dummy"
                     else: temp_type = "dot"
-                    print("Step 1 Done: Target Placed. Now draw SEARCH Polygon.")
+                    print("Step 1: Target Placed. Now Left-Click to draw SEARCH Polygon.")
                 elif not polygon_closed:
                     search_polygon.append((real_x, real_y))
-                elif not nfz_closed:
-                      nfz_polygon.append((real_x, real_y))
-                elif not transit_done:
-                      manual_transit_pixels.append((real_x, real_y))
                 update = True
 
             elif event == cv2.EVENT_RBUTTONDOWN:
                 if not polygon_closed and len(search_polygon) >= 3:
                     polygon_closed = True
-                    print("Step 2 Done: Search Poly Closed. Now draw NO-FLY ZONE (Red).")
-                    update = True
-                elif polygon_closed and not nfz_closed:
-                    nfz_closed = True
-                    print("Step 3 Done: NFZ Closed. Click INTERMEDIATE WAYPOINTS (Cyan) or R-Click to Launch.")
-                    update = True
-                elif nfz_closed and not transit_done:
-                    transit_done = True
-                    print("Step 4 Done: Transit Setup Complete. Press KEY to Launch.")
+                    print("Step 2: Polygon Closed. Press KEY to Launch.")
                     update = True
 
             if update:
@@ -108,43 +92,29 @@ class SimulationEnvironment:
                     cv2.polylines(temp_vis, pts, polygon_closed, (0, 255, 0), 2)
                     for p in pts[0]: cv2.circle(temp_vis, tuple(p), 3, (0, 255, 0), -1)
                 
-                if len(nfz_polygon) > 0:
-                    pts = [np.array([[int(p[0]*scale_factor), int(p[1]*scale_factor)] for p in nfz_polygon], dtype=np.int32)]
-                    cv2.polylines(temp_vis, pts, nfz_closed, (0, 0, 255), 2)
-                    for p in pts[0]: cv2.circle(temp_vis, tuple(p), 3, (0, 0, 255), -1)
-
-                if len(manual_transit_pixels) > 0:
-                    t_pts = [np.array([[int(p[0]*scale_factor), int(p[1]*scale_factor)] for p in manual_transit_pixels], dtype=np.int32)]
-                    cv2.polylines(temp_vis, t_pts, False, (255, 255, 0), 1)
-                    for p in t_pts[0]: cv2.circle(temp_vis, tuple(p), 4, (255, 255, 0), -1)
                 cv2.imshow(window_name, temp_vis)
 
         cv2.namedWindow(window_name)
         cv2.imshow(window_name, display_map)
         cv2.setMouseCallback(window_name, mouse_callback)
         print("--- MISSION SETUP ---")
-        print("1. Click Target.")
-        print("2. Left-Click Search Points -> Right-Click Close (Green).")
-        print("3. Left-Click NFZ Points -> Right-Click Close (Red).")
-        print("4. Left-Click Intermediate Waypoints -> Right-Click Finish (Cyan).")
-        print("5. Press KEY to start.")
+        print("1. Left-Click Target.")
+        print("2. Left-Click Green Search Points -> Right-Click to Close.")
+        print("3. Press KEY to start.")
         cv2.waitKey(0)
         cv2.destroyWindow(window_name)
         
         self.sim_target_px = target_px
         self.sim_target_type = temp_type
-        return target_px, temp_type, search_polygon, nfz_polygon, manual_transit_pixels
+        return target_px, temp_type, search_polygon
 
     def get_drone_view(self, cx, cy, alt, yaw):
-        # Setup Camera Params
         fov = 2 * math.atan(config.SENSOR_WIDTH_MM / (2 * config.FOCAL_LENGTH_MM))
         safe_alt = max(1.0, alt)
         ground_w = 2 * safe_alt * math.tan(fov / 2)
-        
         view_w_px = int(ground_w * self.geo.pix_per_m)
         view_h_px = int(view_w_px * (config.IMAGE_H / config.IMAGE_W))
         
-        # Crop-Then-Rotate Logic
         diag = int(math.sqrt(view_w_px**2 + view_h_px**2))
         x1 = cx - diag // 2; y1 = cy - diag // 2
         x2 = x1 + diag; y2 = y1 + diag
@@ -192,7 +162,7 @@ class SimulationEnvironment:
 
         return final_view, view_w_px, view_h_px
 
-    def get_god_view(self, cx, cy, yaw, view_w_px, view_h_px, zoom_level, virtual_poly, search_poly, nfz_poly, target_gps, landing_gps, geo_tool):
+    def get_god_view(self, cx, cy, yaw, view_w_px, view_h_px, zoom_level, virtual_poly, search_poly, target_gps, landing_gps, geo_tool):
         display_map = self.full_map.copy()
         
         if self.sim_target_px is not None:
@@ -206,8 +176,6 @@ class SimulationEnvironment:
         # Draw Polygons
         if len(search_poly) > 1:
               cv2.polylines(display_map, [np.array(search_poly, np.int32)], True, (0, 255, 0), 2)
-        if len(nfz_poly) > 1:
-              cv2.polylines(display_map, [np.array(nfz_poly, np.int32)], True, (0, 0, 255), 2)
         if len(virtual_poly) > 0:
               cv2.drawContours(display_map, [virtual_poly], -1, (255, 0, 255), 2)
 

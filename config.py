@@ -8,11 +8,6 @@
 # "REAL": Uses Real Camera and assumes waypoints are loaded/generated elsewhere.
 MODE = "SIMULATION" 
 
-# --- PLANNING ALGORITHMS ---
-# Options: "ROTATED_SWEEP" (Complex, fits polygon angle)
-#          "SIMPLE_LAWNMOWER" (Standard North/South grid)
-SEARCH_ALGORITHM = "SIMPLE_LAWNMOWER"
-
 # --- FLIGHT CONNECTION ---
 # Sim: 'tcp:127.0.0.1:5762'
 # Real (Pi to Cube via Serial): '/dev/ttyACM0' or '/dev/ttyAMA0'
@@ -20,7 +15,7 @@ CONNECTION_STR = 'tcp:127.0.0.1:5762'
 BAUD_RATE = 57600
 
 # --- ALTITUDES ---
-TARGET_ALT = 5.0 # Search Altitude (Meters)
+TARGET_ALT = 30.0 # Search Altitude (Meters)
 VERIFY_ALT = 15.0 # Descent Altitude for Verification
 
 # --- MAP CONFIGURATION (Simulation Only) ---
@@ -41,9 +36,6 @@ FOCAL_LENGTH_MM = 6.0
 IMAGE_W = 640
 IMAGE_H = 480
 REAL_CAMERA_INDEX = 0 # Usually 0 for Pi Cam
-
-# --- SAFETY ---
-NFZ_BUFFER_M = 10.0 # Buffer distance from No-Fly Zone
 
 # --- SPEED SETTINGS ---
 TRANSIT_SPEED_MPS = 15.0  
