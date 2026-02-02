@@ -1,32 +1,48 @@
 # config.py
 # ==========================================
-#       CALIBRATION & CONFIGURATION
+#       CONFIGURATION & SETTINGS
 # ==========================================
 
+# --- OPERATION MODE ---
+# Set to "SIMULATION" for laptop testing with map.jpg
+# Set to "REAL" for flying the actual drone with a camera
+MODE = "SIMULATION" 
+
+# --- FLIGHT CONNECTION ---
+# Sim: 'tcp:127.0.0.1:5762'
+# Real (Pi to Cube via Serial): '/dev/ttyACM0' or '/dev/ttyAMA0'
 CONNECTION_STR = 'tcp:127.0.0.1:5762'
-TARGET_ALT = 40.0 # Search Altitude
+BAUD_RATE = 57600
+
+# --- ALTITUDES ---
+TARGET_ALT = 40.0 # Search Altitude (Meters)
 VERIFY_ALT = 15.0 # Descent Altitude for Verification
 
-# 1. Map Configuration
+# --- MAP CONFIGURATION (Simulation Only) ---
 MAP_FILE = "map.jpg"
 DUMMY_FILE = "dummy.png"
-MAP_WIDTH_METERS = 480.0  # Total width of the map image in meters
+MAP_WIDTH_METERS = 480.0  
 REF_LAT = 51.425106  
 REF_LON = -2.672257
 
-# 2. Target Size Configuration
-TARGET_REAL_RADIUS_M = 0.15 # 15 cm radius for the red dot
-DUMMY_HEIGHT_M = 1.8        # 6 ft (1.8m) tall dummy
+# --- TARGET SPECS ---
+TARGET_REAL_RADIUS_M = 0.15 # 15 cm radius 
+DUMMY_HEIGHT_M = 1.8        
 
-# 3. Camera Specs
+# --- CAMERA SPECS ---
+# Important: Update these for the Raspberry Pi Global Shutter Camera
 SENSOR_WIDTH_MM = 5.02
 FOCAL_LENGTH_MM = 6.0
 IMAGE_W = 640
 IMAGE_H = 480
+REAL_CAMERA_INDEX = 0 # 0 is usually the default Pi Camera
 
-# 4. Safety
-NFZ_BUFFER_M = 10.0 # Meters to keep away from NFZ
+# --- SAFETY ---
+NFZ_BUFFER_M = 10.0 # Buffer distance from No-Fly Zone
 
-# 5. Speed Settings
-TRANSIT_SPEED_MPS = 15.0  # Speed when flying TO the search area (m/s)
-SEARCH_SPEED_MPS = 10.0   # Speed while scanning the grid (m/s)
+# --- SPEED SETTINGS ---
+TRANSIT_SPEED_MPS = 15.0  
+SEARCH_SPEED_MPS = 10.0   
+
+# --- LOGGING ---
+LOG_FILE = "flight_log.csv"
