@@ -27,19 +27,25 @@ class VisualFlightMission:
             self.sim = SimulationEnvironment(GeoTransformer(map_w_px=100)) # Temp init
             self.geo = GeoTransformer(map_w_px=self.sim.map_w)
             self.sim.geo = self.geo # Sync geo tool
+            # Click setup for Target, Search Poly, NFZ, and Transit waypoints
             self.target_px, self.tgt_type, self.search_poly, self.nfz_poly, self.transit_px = self.sim.setup_on_map()
             
+            # Init Vision (Sim Mode)
             self.eyes = VisionSystem(camera_index=None, model_path="best.tflite")
             if self.tgt_type == "dummy": self.eyes.using_ai = True
             else: self.eyes.using_ai = False
             
         else: # REAL MODE
-            self.geo = GeoTransformer(map_w_px=4800) # Estimate
+            # We don't have a map image, so we assume a scale or load from file
+            # Ideally, in a future update, you'd load KMLs here. 
+            self.geo = GeoTransformer(map_w_px=4800) 
             self.sim = None
             self.search_poly = [] 
             self.nfz_poly = [] 
             self.transit_px = []
             
+            # Init Vision (Real Camera)
+            # This is key for the "Real Drone" requirement
             self.eyes = VisionSystem(camera_index=config.REAL_CAMERA_INDEX, model_path="best.tflite")
             self.eyes.using_ai = True 
             print("Vision System: Real Camera Initialized")
@@ -61,18 +67,24 @@ class VisualFlightMission:
         self.vx = 0; self.vy = 0; self.vz = 0
         self.roll = 0; self.pitch = 0; self.yaw = 0
         
+        # 5. Mission Data
         self.waypoints = []
         self.wp_index = 0
         self.transit_waypoints = []
         self.transit_index = 0
         
+        # Target Data
         self.target_lat = 0; self.target_lon = 0
         self.landing_lat = 0; self.landing_lon = 0
         self.current_conf = 0.0
-        self.view_w_px = 100; self.view_h_px = 100
+        
+        # Helper vars
+        self.view_w_px = 100
+        self.view_h_px = 100
         self.zoom_level = 1.0 
         self.last_speed_req = 0
         
+        # Logging (Requirement R11)
         self.log_file = open(config.LOG_FILE, 'w', newline='')
         self.logger = csv.writer(self.log_file)
         self.logger.writerow(["Timestamp", "State", "Lat", "Lon", "Alt", "Target_Conf"])
@@ -111,16 +123,24 @@ class VisualFlightMission:
 
     def update_dashboard(self):
         found = False; u = 0; v = 0; conf = 0.0
+        frame = None
+
+        # 1. GET IMAGE FRAME
         if config.MODE == "SIMULATION":
             px, py = self.geo.gps_to_pixels(self.lat, self.lon)
             frame, self.view_w_px, self.view_h_px = self.sim.get_drone_view(px, py, self.alt, self.yaw)
         else:
+            # Real Mode: Grab from Camera
             frame = self.eyes.get_frame()
-            if frame is None: frame = np.zeros((config.IMAGE_H, config.IMAGE_W, 3), dtype=np.uint8)
+            if frame is None: 
+                frame = np.zeros((config.IMAGE_H, config.IMAGE_W, 3), dtype=np.uint8)
 
+        # 2. PROCESS FRAME
+        # Unified logic: We pass the frame we just got to the vision system
         found, u, v, conf = self.eyes.process_frame_manually(frame)
         self.current_conf = conf
 
+        # 3. DRAW HUD
         cx, cy = config.IMAGE_W // 2, config.IMAGE_H // 2
         cv2.line(frame, (cx - 20, cy), (cx + 20, cy), (0, 255, 255), 2)
         cv2.line(frame, (cx, cy - 20), (cx, cy + 20), (0, 255, 255), 2)
@@ -134,6 +154,7 @@ class VisualFlightMission:
         cv2.putText(frame, f"STATE: {self.state}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
         cv2.putText(frame, f"ALT: {self.alt:.1f}m", (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
         
+        # 4. COMPOSITE VIEW (Only applies if we have a God View map)
         final_display = frame
         if config.MODE == "SIMULATION":
              god_frame = self.sim.get_god_view(
@@ -166,9 +187,11 @@ class VisualFlightMission:
             self.update_telemetry()
             target_found, px_u, px_v = self.update_dashboard()
             
+            # Log Data (R11)
             if time.time() % 1.0 < 0.1: 
                 self.logger.writerow([datetime.now(), self.state, self.lat, self.lon, self.alt, self.current_conf])
             
+            # --- MANUAL OVERRIDE ---
             if key == ord('m') or key == ord('M'):
                 if self.state != State.MANUAL:
                     print("!!! MANUAL CONTROL OVERRIDE !!!")
@@ -179,6 +202,7 @@ class VisualFlightMission:
                     if target_found: self.state = State.CENTERING
                     else: self.state = self.previous_state
             
+            # --- STATE MACHINE ---
             if self.state == State.INIT:
                 if time.time() - self.last_req > 1.0:
                     try:
@@ -215,20 +239,25 @@ class VisualFlightMission:
             elif self.state == State.TAKEOFF:
                 if self.alt >= config.TARGET_ALT * 0.90:
                     print("Target Altitude Reached.")
+                    
+                    # 1. Generate Grid (Sim only for now, Real needs KML loader feature)
                     if config.MODE == "SIMULATION":
                         self.waypoints = self.planner.generate_search_pattern(self.sim.map_w, self.sim.map_h)
                     else:
-                        print("Real Mode: Hovering or load KML...")
+                        print("Real Mode: No Map Polygon. Hovering or waiting for command...")
                         self.state = State.SEARCH 
                         
+                    # 2. Plan Transit (Fixed Logic)
                     if self.waypoints:
                         self.transit_waypoints = []
+                        # Add Manual Transit Points if they exist
                         if len(self.transit_px) > 0:
                             print(f"Loading {len(self.transit_px)} Manual Transit Points...")
                             for px in self.transit_px:
                                 t_lat, t_lon = self.geo.pixels_to_gps(px[0], px[1])
                                 self.transit_waypoints.append((t_lat, t_lon))
                             self.transit_waypoints.append(self.waypoints[0])
+                        # Or Auto-Path around NFZ
                         else:
                             print("Planning Auto-Path around NFZ...")
                             self.transit_waypoints = self.planner.plan_path_around_nfz(

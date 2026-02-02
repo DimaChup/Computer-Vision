@@ -4,8 +4,8 @@
 # ==========================================
 
 # --- OPERATION MODE ---
-# Set to "SIMULATION" for laptop testing with map.jpg
-# Set to "REAL" for flying the actual drone with a camera
+# "SIMULATION": Uses map.jpg and mouse clicks for setup.
+# "REAL": Uses Real Camera and assumes waypoints are loaded/generated elsewhere.
 MODE = "SIMULATION" 
 
 # --- FLIGHT CONNECTION ---
@@ -30,12 +30,12 @@ TARGET_REAL_RADIUS_M = 0.15 # 15 cm radius
 DUMMY_HEIGHT_M = 1.8        
 
 # --- CAMERA SPECS ---
-# Important: Update these for the Raspberry Pi Global Shutter Camera
+# Update these for the Raspberry Pi Global Shutter Camera
 SENSOR_WIDTH_MM = 5.02
 FOCAL_LENGTH_MM = 6.0
 IMAGE_W = 640
 IMAGE_H = 480
-REAL_CAMERA_INDEX = 0 # 0 is usually the default Pi Camera
+REAL_CAMERA_INDEX = 0 # Usually 0 for Pi Cam
 
 # --- SAFETY ---
 NFZ_BUFFER_M = 10.0 # Buffer distance from No-Fly Zone
