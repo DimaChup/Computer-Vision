@@ -27,10 +27,8 @@ class VisualFlightMission:
             self.sim = SimulationEnvironment(GeoTransformer(map_w_px=100)) # Temp init
             self.geo = GeoTransformer(map_w_px=self.sim.map_w)
             self.sim.geo = self.geo # Sync geo tool
-            # Click setup for Target, Search Poly, NFZ, and Transit waypoints
             self.target_px, self.tgt_type, self.search_poly, self.nfz_poly, self.transit_px = self.sim.setup_on_map()
             
-            # Init Vision (Sim Mode)
             self.eyes = VisionSystem(camera_index=None, model_path="best.tflite")
             if self.tgt_type == "dummy": self.eyes.using_ai = True
             else: self.eyes.using_ai = False
@@ -260,6 +258,7 @@ class VisualFlightMission:
                         # Or Auto-Path around NFZ
                         else:
                             print("Planning Auto-Path around NFZ...")
+                            # Plan path from CURRENT LOCATION to FIRST WAYPOINT
                             self.transit_waypoints = self.planner.plan_path_around_nfz(
                                 (self.lat, self.lon), self.waypoints[0])
 

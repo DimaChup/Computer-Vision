@@ -20,7 +20,7 @@ CONNECTION_STR = 'tcp:127.0.0.1:5762'
 BAUD_RATE = 57600
 
 # --- ALTITUDES ---
-TARGET_ALT = 40.0 # Search Altitude (Meters)
+TARGET_ALT = 5.0 # Search Altitude (Meters)
 VERIFY_ALT = 15.0 # Descent Altitude for Verification
 
 # --- MAP CONFIGURATION (Simulation Only) ---
