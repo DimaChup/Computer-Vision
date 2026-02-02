@@ -8,6 +8,11 @@
 # "REAL": Uses Real Camera and assumes waypoints are loaded/generated elsewhere.
 MODE = "SIMULATION" 
 
+# --- PLANNING ALGORITHMS ---
+# Options: "ROTATED_SWEEP" (Complex, fits polygon angle)
+#          "SIMPLE_LAWNMOWER" (Standard North/South grid)
+SEARCH_ALGORITHM = "SIMPLE_LAWNMOWER"
+
 # --- FLIGHT CONNECTION ---
 # Sim: 'tcp:127.0.0.1:5762'
 # Real (Pi to Cube via Serial): '/dev/ttyACM0' or '/dev/ttyAMA0'
