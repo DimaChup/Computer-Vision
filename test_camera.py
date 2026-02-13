@@ -1,28 +1,27 @@
 """
-Test 1: Pi Camera Feed
-Run this on the Pi to check if the camera works.
-It will show a live preview window for 10 seconds, then save a photo.
+Test Pi Camera - no Qt/display needed.
+Captures a photo and prints camera info.
+Run on Pi: python3 test_camera.py
 """
 from picamera2 import Picamera2
-from picamera2.previews.qt import QGlPicamera2
 import time
 
 print("Starting camera test...")
 
 cam = Picamera2()
-
-# Show live preview (you'll see it on the Pi's screen)
-cam.configure(cam.create_preview_configuration())
-cam.start_preview(True)  # True = show on screen
+config = cam.create_still_configuration(main={"size": (640, 480)})
+cam.configure(config)
 cam.start()
+print("Camera started. Warming up...")
+time.sleep(2)
 
-print("Camera preview is live! Showing for 10 seconds...")
-time.sleep(10)
-
-# Save a test photo
-cam.switch_mode_and_capture_file(cam.create_still_configuration(), "test_photo.jpg")
+# Capture a test photo
+cam.capture_file("test_photo.jpg")
 print("Photo saved as test_photo.jpg")
 
-cam.stop_preview()
+# Grab a frame as numpy array (this is what main.py will use)
+frame = cam.capture_array()
+print(f"Frame shape: {frame.shape}  dtype: {frame.dtype}")
+
 cam.stop()
 print("Camera test PASSED!")
