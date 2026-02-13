@@ -9,6 +9,16 @@ from datetime import datetime
 import sys
 import os
 
+# --- Detect if display is available (headless Pi vs desktop) ---
+HEADLESS = False
+try:
+    _test_win = "__headless_test__"
+    cv2.namedWindow(_test_win)
+    cv2.destroyWindow(_test_win)
+except cv2.error:
+    HEADLESS = True
+    print("[INFO] Running in HEADLESS mode (no display window)")
+
 # --- Import Config with Safety Check ---
 try:
     import config
@@ -197,7 +207,8 @@ class VisualFlightMission:
              god_resized = cv2.resize(god_frame, (int(god_frame.shape[1]*h_scale), frame.shape[0]))
              final_display = np.hstack((god_resized, frame))
 
-        cv2.imshow("Mission Dashboard", final_display)
+        if not HEADLESS:
+            cv2.imshow("Mission Dashboard", final_display)
         return found, u, v
 
     def set_speed(self, speed_mps):
@@ -228,14 +239,21 @@ class VisualFlightMission:
 
     def run(self):
         print("Starting Mission Loop...")
-        cv2.namedWindow("Mission Dashboard")
-        if config.MODE == "SIMULATION":
-            cv2.setMouseCallback("Mission Dashboard", self.on_dashboard_mouse)
-        
-        key = -1 
+        if not HEADLESS:
+            cv2.namedWindow("Mission Dashboard")
+            if config.MODE == "SIMULATION":
+                cv2.setMouseCallback("Mission Dashboard", self.on_dashboard_mouse)
+
+        key = -1
+        last_status_print = 0
         while True:
             self.update_telemetry()
             target_found, px_u, px_v = self.update_dashboard()
+
+            # Headless: print status to terminal periodically
+            if HEADLESS and time.time() - last_status_print > 2.0:
+                print(f"[{self.state}] Alt:{self.alt:.1f}m Pos:{self.lat:.6f},{self.lon:.6f} Conf:{self.current_conf:.2f}")
+                last_status_print = time.time()
             
             # Log Data
             if time.time() % 1.0 < 0.1: 
@@ -393,8 +411,11 @@ class VisualFlightMission:
                 else:
                     self.send_global_target(self.landing_lat, self.landing_lon, 0) 
 
-            key = cv2.waitKey(20) & 0xFF
-            if key == 27: break
+            if not HEADLESS:
+                key = cv2.waitKey(20) & 0xFF
+                if key == 27: break
+            else:
+                time.sleep(0.02)
 
     def on_dashboard_mouse(self, event, x, y, flags, param):
         if event == cv2.EVENT_MOUSEWHEEL:

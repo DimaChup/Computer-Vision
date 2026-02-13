@@ -6,13 +6,13 @@
 # --- OPERATION MODE ---
 # "SIMULATION": Uses map.jpg and mouse clicks for setup.
 # "REAL": Uses Real Camera and assumes waypoints are loaded/generated elsewhere.
-MODE = "SIMULATION" 
+MODE = "REAL" 
 
 # --- FLIGHT CONNECTION ---
 # Sim: 'tcp:127.0.0.1:5762'
-# Real (Pi to Cube via Serial): '/dev/ttyACM0' or '/dev/ttyAMA0'
-CONNECTION_STR = 'tcp:127.0.0.1:5762'
-BAUD_RATE = 57600
+# Real (Pi to Cube via Serial): '/dev/ttyAMA0'
+CONNECTION_STR = '/dev/ttyAMA0' if MODE == "REAL" else 'tcp:127.0.0.1:5762'
+BAUD_RATE = 921600 if MODE == "REAL" else 57600
 
 # --- ALTITUDES ---
 TARGET_ALT = 30.0 # Search Altitude (Meters)
