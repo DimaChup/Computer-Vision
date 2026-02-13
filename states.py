@@ -1,5 +1,5 @@
 # states.py
-s
+
 class State:
     INIT = "INIT"
     CONNECTING = "CONNECTING"
