@@ -10,7 +10,16 @@ import os
 print("Connecting to Cube...")
 conn = mavutil.mavlink_connection('/dev/ttyAMA0', baud=921600)
 conn.wait_heartbeat(timeout=10)
-print("Connected! Press Ctrl+C to stop.\n")
+print("Connected!")
+
+# Request all data streams at 4Hz
+print("Requesting data streams...")
+conn.mav.request_data_stream_send(
+    conn.target_system, conn.target_component,
+    mavutil.mavlink.MAV_DATA_STREAM_ALL, 4, 1
+)
+time.sleep(1)
+print("Streams requested. Press Ctrl+C to stop.\n")
 
 # Store latest values
 data = {
