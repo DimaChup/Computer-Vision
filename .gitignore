@@ -3,6 +3,5 @@ __pycache__/
 venv/
 project_data/
 runs/
-*.tflite
 *.pt
 nul
