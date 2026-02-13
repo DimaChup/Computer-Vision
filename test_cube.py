@@ -14,7 +14,7 @@ connection = None
 for port in ports:
     try:
         print(f"Trying {port}...")
-        connection = mavutil.mavlink_connection(port, baud=57600)
+        connection = mavutil.mavlink_connection(port, baud=921600)
         print(f"Connected on {port}! Waiting for heartbeat...")
         connection.wait_heartbeat(timeout=10)
         print(f"Heartbeat received!")
