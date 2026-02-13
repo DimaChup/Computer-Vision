@@ -5,3 +5,4 @@ project_data/
 runs/
 *.pt
 nul
+flight_log.csv
