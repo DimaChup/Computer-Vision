@@ -7,14 +7,14 @@ This is READ ONLY - nothing will move or arm.
 from pymavlink import mavutil
 import time
 
-# Try common USB device paths
-ports = ['/dev/ttyACM0', '/dev/ttyACM1', '/dev/ttyUSB0', '/dev/ttyUSB1']
+# Try common device paths (UART first, then USB)
+ports = ['/dev/ttyAMA0', '/dev/serial0', '/dev/ttyACM0', '/dev/ttyACM1', '/dev/ttyUSB0', '/dev/ttyUSB1']
 
 connection = None
 for port in ports:
     try:
         print(f"Trying {port}...")
-        connection = mavutil.mavlink_connection(port, baud=115200)
+        connection = mavutil.mavlink_connection(port, baud=57600)
         print(f"Connected on {port}! Waiting for heartbeat...")
         connection.wait_heartbeat(timeout=10)
         print(f"Heartbeat received!")
